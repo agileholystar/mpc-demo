@@ -24,7 +24,7 @@ const keygenStep1 = async (req, res) => {
     console.timeEnd('step1');
 
     message2 = protoBuffToHexString(message2);
-    console.log('message 2 : ', message2);
+    //console.log('message 2 : ', message2);
 
     res.status(200).json({ result: message2 });
 };
@@ -35,10 +35,10 @@ const keygenStep2 = async (req, res) => {
 
     p2KeyGenCtx = memoryStore[userId]['p2KeyGenCtx'];
 
-    console.time('step3');
+    console.time('step2');
     p2KeyGenCtx.step2(message3);
 
-    console.timeEnd('step3');
+    console.timeEnd('step2');
 
     let keyShare2 = p2KeyGenCtx.exportKeyShare();
     let keyShare2JsonStr = JSON.stringify(keyShare2.toJsonObject(), null, 4);

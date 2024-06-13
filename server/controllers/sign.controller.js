@@ -15,6 +15,8 @@ const signStep1 = async (req, res) => {
     const keyShare2JsonStr = memoryStore[userId]['keyShare2JsonStr'];
 
     if (!keyShare2JsonStr) {
+        console.log('userId : ', userId);
+        console.dir(memoryStore[userId]);
         res.status(400).send({
             error: 'you must generate the keys first',
         });
@@ -32,19 +34,18 @@ const signStep1 = async (req, res) => {
             m
         );
         console.timeEnd('createContext');
-
-        console.log('received message1 : ', req.body.message1);
+        console.log('received message1');
+        // console.log('received message1 : ', req.body.message1);
         const message1 = hexStringToProtoBuff(req.body.message1);
 
         console.time('step1');
         const message2 = p2SignCtx.step1(message1);
         console.timeEnd('step1');
 
-        memoryStore[userId] = {};
         memoryStore[userId]['p2SignCtx'] = p2SignCtx;
 
         const result = protoBuffToHexString(message2);
-        console.log('message 2 : ', result);
+        //console.log('message 2 : ', result);
 
         res.status(200).json({ result: result });
     }
@@ -53,18 +54,20 @@ const signStep1 = async (req, res) => {
 const signStep2 = async (req, res) => {
     const userId = req.body.userId;
     const message3 = hexStringToProtoBuff(req.body.message3);
-
-    console.log('received message3 : ', req.body.message3);
+    console.log('received message3');
+    //console.log('received message3 : ', req.body.message3);
 
     p2SignCtx = memoryStore[userId]['p2SignCtx'];
 
-    console.time('step3');
+    console.time('step2');
     const message4 = p2SignCtx.step2(message3);
-    console.timeEnd('step3');
+    console.timeEnd('step2');
+
+    delete memoryStore[userId]['p2SignCtx'];
 
     // const result = p2Ctx.message4;
     const result = protoBuffToHexString(message4);
-    console.log('message 4 : ', result);
+    //console.log('message 4 : ', result);
 
     res.status(200).json({
         result: result,

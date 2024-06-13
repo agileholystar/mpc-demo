@@ -1,87 +1,36 @@
-const axios = require('axios');
-const { createHash } = require('crypto');
-const config = require('./config');
-const {
-    TPCEcdsaKeyGen,
-    TPCEcdsaSign,
-} = require('@safeheron/two-party-ecdsa-js');
 const { select, input } = require('@inquirer/prompts');
-const endPointUrl = config.endPointUrl || 'http://127.0.0.1:3030';
-console.log('END_POINT_URL : ', endPointUrl);
 const BN = require('bn.js');
-const elliptic = require('elliptic');
-const Secp256k1 = new elliptic.ec('secp256k1');
-const assert = require('assert');
-let message;
-
-let keyShare1JsonStr;
-let global_r;
-let global_s;
-let global_v;
-let p1KeyGenCtx;
-let p1SignCtx;
-let keyShare1;
-function recoverPubKey(msg, r, s, j) {
-    //if ((3 & j) === j) throw 'The recovery param is more than two bits';
-    assert((3 & j) === j, 'The recovery param is more than two bits');
-
-    var n = Secp256k1.n;
-    var e = msg;
-
-    // A set LSB signifies that the y-coordinate is odd
-    var isYOdd = j & 1;
-    var isSecondKey = j >> 1;
-    if (r.cmp(Secp256k1.curve.p.umod(Secp256k1.n)) >= 0 && isSecondKey)
-        throw 'Unable to find sencond key candinate';
-
-    // 1.1. Let x = r + jn.
-    let x = undefined;
-    if (isSecondKey) x = Secp256k1.curve.pointFromX(r.add(Secp256k1.n), isYOdd);
-    else x = Secp256k1.curve.pointFromX(r, isYOdd);
-
-    var rInv = r.invm(n);
-    var s1 = n.sub(e).mul(rInv).umod(n);
-    var s2 = s.mul(rInv).umod(n);
-
-    // 1.6.1 Compute Q = r^-1 (sR -  eG)
-    //               Q = r^-1 (sR + -eG)
-    return Secp256k1.g.mulAdd(s1, x, s2);
-}
-
-function verifySig(message_to_sign, r, s, v, pub) {
-    let pub0 = recoverPubKey(
-        message_to_sign,
-        r.umod(Secp256k1.n),
-        s.umod(Secp256k1.n),
-        v
-    );
-    return pub0.eq(pub);
-}
-
-function protoBuffToHexString(protobuff) {
-    return Buffer.from(protobuff).toString('hex');
-}
-
-function hexStringToProtoBuff(hexString) {
-    return Uint8Array.from(Buffer.from(hexString, 'hex'));
-}
+const { Buffer } = require('buffer');
+const { keccak256 } = require('ethereumjs-util');
+const { Web3 } = require('web3');
+const config = require('./config');
+const web3 = new Web3(config.ethereumRpcUrl || 'http://127.0.0.1:7545');
+const { RLP } = require('@ethereumjs/rlp');
+const { createHash } = require('crypto');
+const KeyManager = require('./keyManager');
+const { getMessageToSign, getMessageToSend } = require('./util');
 
 async function main() {
     const userId = await input({ message: 'Enter your ID to login' });
+
+    // MPC 기반 키 생성 및 서명 검증을 위한 객체 생성
+    const keyManager = new KeyManager(userId);
+
+    // 필수적인 작업인 초기화 함수 호출
+    await keyManager.init();
+    // 연결된 이더리움 노드에 등록된 EOA들을 조회한다.
+    const accounts = await web3.eth.getAccounts();
+    let signature; // 이더리움과 상관없는 테스트에 사용될 서명 저장 변수
+    console.log('Your EOA : ', keyManager.EOA);
 
     while (true) {
         const answer = await select({
             message: 'Select a package manager',
             choices: [
                 {
-                    name: 'keygen',
-                    value: 'keygen',
-                    description: 'generate your distributed key via DKG',
-                },
-                {
                     name: 'sign',
                     value: 'sign',
-                    description: 'generate your sign via your keys',
+                    description: 'generate your signature',
                 },
                 {
                     name: 'verify',
@@ -90,124 +39,102 @@ async function main() {
                 },
                 {
                     name: 'send_tx',
-                    value: 'send_Tx',
+                    value: 'send_tx',
                     description:
                         'send your ethereum tx(ERC20-mint) to local ethereum network',
                 },
+                {
+                    name: 'get_ether',
+                    value: 'get_ether',
+                    description:
+                        'Receive some ether for free from the Ethereum local testnet',
+                },
             ],
         });
+        console.log('your answer : ', answer);
 
         switch (answer) {
-            case 'keygen':
-                console.time('init');
-                p1KeyGenCtx = await TPCEcdsaKeyGen.P1Context.createContext();
-                console.timeEnd('init');
-
-                console.time('step1');
-                const message1 = p1KeyGenCtx.step1();
-                console.timeEnd('step1');
-                const baseEndPoint = endPointUrl + '/api/v1/keygen';
-
-                let res;
-                res = await axios.put(baseEndPoint + '/step1', {
-                    userId,
-                    message1: protoBuffToHexString(message1),
-                });
-
-                const message2 = hexStringToProtoBuff(res.data.result);
-                console.log('receive message 2 : ', res.data.result);
-
-                const message3 = p1KeyGenCtx.step2(message2);
-
-                res = await axios.put(baseEndPoint + '/step2', {
-                    userId,
-                    message3: protoBuffToHexString(message3),
-                });
-
-                keyShare1 = p1KeyGenCtx.exportKeyShare();
-                keyShare1JsonStr = JSON.stringify(
-                    keyShare1.toJsonObject(),
-                    null,
-                    4
-                );
-                console.log('key share 1: \n', keyShare1JsonStr);
-
-                break;
+            // 임의의 문자열 기반 데이터를 입력받아서 그것에 대해 서명을 생성한다.
             case 'sign':
-                if (!keyShare1JsonStr) {
-                    console.log('you have not keyShare yet!');
-                } else {
-                    const jsonData = require('./' + config.inputFileName);
+                const inputMessage = await input({
+                    message: 'Entter a message(string) to be signed.',
+                });
 
-                    message = createHash('sha256')
-                        .update(jsonData.message)
-                        .digest('hex');
+                hashedMessage = createHash('sha256')
+                    .update(inputMessage)
+                    .digest('hex');
 
-                    p1SignCtx = await TPCEcdsaSign.P1Context.createContext(
-                        keyShare1JsonStr,
-                        new BN(message, 'hex')
-                    );
-                    console.time('step1');
-                    const message1 = p1SignCtx.step1();
-                    console.timeEnd('step1');
-                    const baseEndPoint = endPointUrl + '/api/v1/sign';
+                signature = await keyManager.sign(hashedMessage);
 
-                    console.log('message1 : ', protoBuffToHexString(message1));
+                console.log('r: \n', signature.r.toString(16));
+                console.log('s: \n', signature.s.toString(16));
+                console.log('v: \n', signature.v);
 
-                    let res;
-                    res = await axios.put(baseEndPoint + '/step1', {
-                        userId,
-                        message: message,
-                        message1: protoBuffToHexString(message1),
-                    });
-
-                    console.log('received message 2 : ', res.data.result);
-                    const message2 = hexStringToProtoBuff(res.data.result);
-
-                    console.time('step2');
-                    const message3 = p1SignCtx.step2(message2);
-                    console.timeEnd('step2');
-
-                    console.log('message3 :', protoBuffToHexString(message3));
-
-                    res = await axios.put(baseEndPoint + '/step2', {
-                        userId,
-                        message3: protoBuffToHexString(message3),
-                    });
-
-                    console.log('receive message 4 : ', res.data.result);
-                    const message4 = hexStringToProtoBuff(res.data.result);
-
-                    p1SignCtx.step3(message4);
-
-                    let [r, s, v] = p1SignCtx.exportSig();
-                    console.log('r: \n', r.toString(16));
-                    console.log('s: \n', s.toString(16));
-                    console.log('v: \n', v);
-                }
                 break;
+
+            // 'sign'을 통해 생성된 서명을 검증한다.
             case 'verify':
+                const m = new BN(hashedMessage, 'hex');
                 try {
-                    const parsedKey = JSON.parse(keyShare1JsonStr);
-
-                    const jsonData = require('./' + config.inputFileName);
-
-                    const m = new BN(message, 'hex');
-                    console.log('my message :', message);
-                    console.log('keyshare Q :', parsedKey.Q);
-                    let [r, s, v] = p1SignCtx.exportSig();
-                    console.log('r: \n', r.toString(16));
-                    console.log('s: \n', s.toString(16));
-                    console.log('v: \n', v);
-                    console.log(verifySig(m, r, s, v, keyShare1.Q));
+                    const verifyResult = await keyManager.verify(
+                        m,
+                        signature.r,
+                        signature.s,
+                        signature.v
+                    );
+                    console.log('verifyResult :', verifyResult);
                 } catch (e) {
                     console.log(e);
                     console.log('invalid signature');
                 }
-
                 break;
+
+            // 테스트를 위해 연결된 네트워크의 관리자 계정으로부터 MPC 기반으로 생성된 EOA에 1 Ether를 채운다.
+            case 'get_ether':
+                await web3.eth.sendTransaction({
+                    to: keyManager.EOA,
+                    from: accounts[0],
+                    value: web3.utils.toWei('1', 'ether'),
+                    // value: BigInt(100),
+                    gasPrice: BigInt(200),
+                });
+                break;
+            // 연결된 네트워크에 MPC 기반으로 생성된 EOA로부터 관리자 계정으로 1 Ether를 송금한다.
             case 'send_tx':
-                console.log('send_tx is not implemented yet!');
+                // Legacy Transaction을 기준으로 한 트랜잭션을 만든다. (연동되는 이더리움 네트워크의 하드포크는 Muir Glacier를 권장)
+                // 다른 타입의 트랜잭션의 경우엔 별도로 수정 및 추가구현이 필요함.
+                const rawTx = {
+                    from: keyManager.EOA,
+                    gasPrice: BigInt(0),
+                    gasLimit: BigInt(100000),
+                    gas: BigInt(21000),
+                    to: accounts[0],
+                    value: BigInt(web3.utils.toWei('1', 'ether')),
+                    //value: BigInt(BigInt(1)),
+                    data: new Uint8Array(0),
+                    nonce: BigInt(0),
+                };
+
+                const serialized = RLP.encode(getMessageToSign(rawTx));
+
+                const transactionDataHash = keccak256(
+                    Buffer.from(serialized)
+                ).toString('hex');
+
+                let txSignature = await keyManager.sign(transactionDataHash);
+                txSignature.v += 27;
+                rawTx.r = '0x' + txSignature.r.toString(16);
+                rawTx.s = '0x' + txSignature.s.toString(16);
+                rawTx.v = '0x' + txSignature.v.toString(16);
+
+                // console.dir(rawTx);
+
+                transactionReceipt = await web3.eth.sendSignedTransaction(
+                    // 서명이 완료된 Raw Transaction을 Serialize하여 이더리움 네트워크에 전송한다.
+                    RLP.encode(getMessageToSend(rawTx))
+                );
+                console.dir(transactionReceipt);
+
                 break;
             default:
                 return;
