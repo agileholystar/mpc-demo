@@ -1,0 +1,2 @@
+memoryStore = {};
+module.exports = memoryStore;
