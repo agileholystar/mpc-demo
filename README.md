@@ -2,6 +2,14 @@
 
 Warning: 이 프로젝트는 내부 PoC 용도로 만들어진 프로젝트이며, MPC의 핵심이 되는 라이브러리인 two-party-ecdsa-js을 사용합니다. 따라서 비상업적인 목적으로만 활용되어야합니다.
 
+## 시스템 구조 및 플로우
+
+MPC 키 생성 프로세스
+![poster](assets/keygen.png)
+
+MPC 서명 프로세스
+![poster](assets/sign.png)
+
 ## 테스트 환경
 
 1. Ethereum Network <br/>
@@ -41,7 +49,7 @@ Warning: 이 프로젝트는 내부 PoC 용도로 만들어진 프로젝트이�
 sign      --> 임의의 문자열을 입력하여 그것에 대해 서명 생성
 verify    --> sign으로 생성된 서명을 검증
 send_tx   --> MPC를 통해 생성된 EOA를 통해 1 ether를 로컬 테스트 네트워크의 관리자 계정으로 보낸다.
-get_ther --> 로컬 테스트 네트워크의 관리자 계정으로부터 1 ether를 MPC를 통해 생성된 EOA로 받는다.
+get_ether --> 로컬 테스트 네트워크의 관리자 계정으로부터 1 ether를 MPC를 통해 생성된 EOA로 받는다.
 ```
 
 클라이언트 실행 화면
